@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>研支团去向分配助手</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">27 人 / 7 地点 / 公开意愿</p>
+        <h1>研支团去向分配助手</h1>
+      </div>
+      <div class="summary-strip" aria-live="polite">
+        <span><strong id="submissionCount">0</strong> 已填写</span>
+        <span><strong id="memberCount">27</strong> 总人数</span>
+        <span><strong id="placeCount">7</strong> 地点</span>
+        <span><strong id="dataMode">本机</strong> 数据</span>
+      </div>
+    </header>
+
+    <main class="app-shell">
+      <nav class="module-nav" aria-label="功能模块">
+        <button class="nav-button active" data-view="home" type="button">总览</button>
+        <button class="nav-button warning" data-view="submit" type="button">填写意愿（填写后信息将会被公开）</button>
+        <button class="nav-button" data-view="profiles" type="button">查看大家的意愿</button>
+        <button class="nav-button" data-view="simulate" type="button">模拟分组</button>
+        <button class="nav-button" data-view="settings" type="button">基础设置</button>
+      </nav>
+
+      <section class="view active" id="homeView">
+        <div class="hero-panel">
+          <div>
+            <p class="eyebrow">分配前的信息台</p>
+            <h2>先收集真实意愿，再透明地模拟去向。</h2>
+          </div>
+          <div class="hero-actions">
+            <button class="primary-action" data-view="submit" type="button">填写意愿（填写后信息将会被公开）</button>
+            <button class="secondary-action" data-view="profiles" type="button">查看大家的意愿</button>
+            <button class="secondary-action" data-view="simulate" type="button">模拟分组</button>
+          </div>
+        </div>
+
+        <div class="metric-grid">
+          <article class="metric-card">
+            <span class="metric-label">收集进度</span>
+            <strong id="homeSubmissionCount">0 / 27</strong>
+            <div class="progress-track"><span id="homeProgress"></span></div>
+          </article>
+          <article class="metric-card">
+            <span class="metric-label">地点容量</span>
+            <strong id="homeCapacity">27</strong>
+            <p id="homeCapacityNote">1 个 3 人点，6 个 4 人点</p>
+          </article>
+          <article class="metric-card">
+            <span class="metric-label">男生覆盖</span>
+            <strong id="homeMaleCount">0</strong>
+            <p>模拟时会优先保证每个地点至少 1 名男生</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="view" id="submitView">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">公开信息</p>
+            <h2>填写个人意愿</h2>
+          </div>
+          <p>提交后，姓名、性别、积分和意愿排序会在“查看大家的意愿”中公开。</p>
+        </div>
+
+        <form class="form-layout" id="wishForm">
+          <div class="field-row">
+            <label>
+              姓名
+              <input id="nameInput" name="name" required autocomplete="name" placeholder="请输入姓名" />
+            </label>
+            <label>
+              性别
+              <select id="genderInput" name="gender" required>
+                <option value="">请选择</option>
+                <option value="男">男</option>
+                <option value="女">女</option>
+              </select>
+            </label>
+            <label>
+              积分
+              <input id="scoreInput" name="score" required step="0.1" type="number" placeholder="例如 -3 或 83.5" />
+            </label>
+          </div>
+
+          <div class="ranked-grid">
+            <fieldset>
+              <legend>最不能接受去的地方（最多 3 个，按顺序）</legend>
+              <select class="avoid-select" data-rank="1"></select>
+              <select class="avoid-select" data-rank="2"></select>
+              <select class="avoid-select" data-rank="3"></select>
+            </fieldset>
+            <fieldset>
+              <legend>最想去的地方（最多 3 个，按顺序）</legend>
+              <select class="prefer-select" data-rank="1"></select>
+              <select class="prefer-select" data-rank="2"></select>
+              <select class="prefer-select" data-rank="3"></select>
+            </fieldset>
+          </div>
+
+          <div class="form-actions">
+            <button class="primary-action" type="submit">公开提交</button>
+            <button class="secondary-action" id="clearFormButton" type="button">清空表单</button>
+          </div>
+        </form>
+      </section>
+
+      <section class="view" id="profilesView">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">已收集</p>
+            <h2>大家的意愿档案</h2>
+          </div>
+          <label class="search-box">
+            搜索
+            <input id="profileSearch" placeholder="输入姓名或地点" />
+          </label>
+        </div>
+        <div class="profile-grid" id="profileGrid"></div>
+      </section>
+
+      <section class="view" id="simulateView">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">按当前数据</p>
+            <h2>模拟分组</h2>
+          </div>
+          <button class="primary-action" id="runSimulationButton" type="button">开始模拟</button>
+        </div>
+        <div class="notice-line" id="simulationNotice"></div>
+        <div class="assignment-grid" id="assignmentGrid"></div>
+      </section>
+
+      <section class="view" id="settingsView">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">基础数据</p>
+            <h2>地点和成员名单</h2>
+          </div>
+          <button class="secondary-action" id="resetDataButton" type="button">恢复默认</button>
+        </div>
+
+        <div class="settings-grid">
+          <form class="settings-panel" id="placesForm">
+            <h3>7 个地点</h3>
+            <div id="placesEditor"></div>
+            <button class="primary-action" type="submit">保存地点</button>
+          </form>
+
+          <form class="settings-panel" id="rosterForm">
+            <h3>27 人名单</h3>
+            <textarea id="rosterInput" spellcheck="false"></textarea>
+            <p class="hint">每行一人，可写成：姓名,性别。未填写的人会在模拟时排在已填写人员之后。</p>
+            <button class="primary-action" type="submit">保存名单</button>
+          </form>
+        </div>
+      </section>
+    </main>
+
+    <dialog id="profileDialog">
+      <div class="dialog-header">
+        <h3 id="dialogName"></h3>
+        <button class="icon-button" id="closeDialogButton" type="button" aria-label="关闭">×</button>
+      </div>
+      <div id="dialogBody"></div>
+    </dialog>
+
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+    <script src="app.js?v=supabase-auth-1"></script>
+  </body>
+</html>

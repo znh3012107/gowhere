@@ -532,24 +532,9 @@ function runSimulation() {
   const assigned = new Set();
 
   const fixedWarnings = seedFixedAssignments(members, assignments, assigned);
-  const submittedMembers = members.filter((member) => member.submitted);
-  const unsubmittedMembers = members.filter((member) => !member.submitted);
+  const solved = solveAssignmentsWithAvoidPriority(members, assignments, assigned);
 
-  seedMaleCoverage(members, assignments, assigned);
-
-  const ordered = [...submittedMembers, ...unsubmittedMembers]
-    .filter((member) => !assigned.has(member.id))
-    .sort((a, b) => Number(b.submitted) - Number(a.submitted) || b.score - a.score || a.name.localeCompare(b.name, "zh-CN"));
-
-  ordered.forEach((member) => {
-    const target = pickBestPlace(member, assignments);
-    if (target) {
-      assignments[target.id].push(member);
-      assigned.add(member.id);
-    }
-  });
-
-  renderAssignments(assignments, members, fixedWarnings);
+  renderAssignments(solved.assignments, members, [...fixedWarnings, ...solved.warnings], solved);
 }
 
 function seedFixedAssignments(members, assignments, assigned) {
@@ -577,6 +562,193 @@ function seedFixedAssignments(members, assignments, assigned) {
   });
 
   return warnings;
+}
+
+function solveAssignmentsWithAvoidPriority(members, fixedAssignmentsByPlace, assigned) {
+  const remaining = members.filter((member) => !assigned.has(member.id));
+  const avoidCandidates = remaining
+    .filter((member) => member.avoid.length > 0)
+    .sort((a, b) => a.score - b.score || a.name.localeCompare(b.name, "zh-CN"));
+
+  for (let allowedCount = 0; allowedCount <= avoidCandidates.length; allowedCount += 1) {
+    const allowedViolators = new Set(avoidCandidates.slice(0, allowedCount).map((member) => member.name));
+    const solved = solveRemainingByMatching(remaining, fixedAssignmentsByPlace, allowedViolators, true);
+    if (solved) {
+      return {
+        ...solved,
+        allowedViolators,
+        relaxedCount: allowedCount,
+        warnings: solved.warnings,
+      };
+    }
+  }
+
+  for (let allowedCount = 0; allowedCount <= avoidCandidates.length; allowedCount += 1) {
+    const allowedViolators = new Set(avoidCandidates.slice(0, allowedCount).map((member) => member.name));
+    const solved = solveRemainingByMatching(remaining, fixedAssignmentsByPlace, allowedViolators, false);
+    if (solved) {
+      return {
+        ...solved,
+        allowedViolators,
+        relaxedCount: allowedCount,
+        warnings: [...solved.warnings, "男生覆盖无法完全满足，已优先保证不想去约束"],
+      };
+    }
+  }
+
+  return {
+    assignments: fixedAssignmentsByPlace,
+    allowedViolators: new Set(),
+    relaxedCount: avoidCandidates.length,
+    warnings: ["没有找到完整分配方案，请检查容量和成员名单"],
+  };
+}
+
+function solveRemainingByMatching(remaining, fixedAssignmentsByPlace, allowedViolators, enforceMaleCoverage) {
+  const assignments = cloneAssignments(fixedAssignmentsByPlace);
+  const slots = buildAssignmentSlots(assignments, enforceMaleCoverage);
+  if (!slots || slots.length !== remaining.length) return null;
+
+  const source = 0;
+  const memberStart = 1;
+  const slotStart = memberStart + remaining.length;
+  const sink = slotStart + slots.length;
+  const graph = Array.from({ length: sink + 1 }, () => []);
+  const assignmentEdges = [];
+
+  remaining.forEach((member, memberIndex) => {
+    addFlowEdge(graph, source, memberStart + memberIndex, 1, 0);
+  });
+
+  slots.forEach((slot, slotIndex) => {
+    addFlowEdge(graph, slotStart + slotIndex, sink, 1, 0);
+  });
+
+  remaining.forEach((member, memberIndex) => {
+    slots.forEach((slot, slotIndex) => {
+      if (slot.requiresMale && member.gender !== "男") return;
+      if (!canAssignToPlace(member, slot.place, allowedViolators)) return;
+
+      const edge = addFlowEdge(
+        graph,
+        memberStart + memberIndex,
+        slotStart + slotIndex,
+        1,
+        assignmentCost(member, slot.place),
+      );
+      assignmentEdges.push({ member, slot, edge });
+    });
+  });
+
+  const flow = minCostMaxFlow(graph, source, sink, remaining.length);
+  if (flow.flow !== remaining.length) return null;
+
+  assignmentEdges.forEach(({ member, slot, edge }) => {
+    if (edge.cap === 0) assignments[slot.place.id].push(member);
+  });
+
+  return {
+    assignments,
+    warnings: [],
+    totalCost: flow.cost,
+  };
+}
+
+function cloneAssignments(assignments) {
+  return Object.fromEntries(Object.entries(assignments).map(([placeId, members]) => [placeId, members.slice()]));
+}
+
+function buildAssignmentSlots(assignments, enforceMaleCoverage) {
+  const slots = [];
+
+  for (const place of state.places) {
+    let open = openSpace(place, assignments);
+    if (open < 0) return null;
+
+    const needsMale = enforceMaleCoverage && !assignments[place.id].some((member) => member.gender === "男");
+    if (needsMale) {
+      if (open <= 0) return null;
+      slots.push({ place, requiresMale: true });
+      open -= 1;
+    }
+
+    for (let index = 0; index < open; index += 1) {
+      slots.push({ place, requiresMale: false });
+    }
+  }
+
+  return slots;
+}
+
+function canAssignToPlace(member, place, allowedViolators) {
+  return !member.avoid.includes(place.id) || allowedViolators.has(member.name);
+}
+
+function assignmentCost(member, place) {
+  const avoidRank = member.avoid.indexOf(place.id);
+  const preferRank = member.prefer.indexOf(place.id);
+  let cost = 0;
+
+  if (avoidRank >= 0) cost += 100000 + (3 - avoidRank) * 1000;
+  if (preferRank >= 0) cost -= (3 - preferRank) * 100;
+  if (member.submitted) cost -= 5;
+  return cost;
+}
+
+function addFlowEdge(graph, from, to, cap, cost) {
+  const forward = { to, rev: graph[to].length, cap, cost };
+  const backward = { to: from, rev: graph[from].length, cap: 0, cost: -cost };
+  graph[from].push(forward);
+  graph[to].push(backward);
+  return forward;
+}
+
+function minCostMaxFlow(graph, source, sink, targetFlow) {
+  let flow = 0;
+  let cost = 0;
+
+  while (flow < targetFlow) {
+    const dist = Array(graph.length).fill(Infinity);
+    const prevNode = Array(graph.length).fill(-1);
+    const prevEdge = Array(graph.length).fill(-1);
+    dist[source] = 0;
+
+    for (let iteration = 0; iteration < graph.length - 1; iteration += 1) {
+      let changed = false;
+      for (let node = 0; node < graph.length; node += 1) {
+        if (!Number.isFinite(dist[node])) continue;
+        graph[node].forEach((edge, edgeIndex) => {
+          if (edge.cap <= 0) return;
+          const nextDist = dist[node] + edge.cost;
+          if (nextDist < dist[edge.to]) {
+            dist[edge.to] = nextDist;
+            prevNode[edge.to] = node;
+            prevEdge[edge.to] = edgeIndex;
+            changed = true;
+          }
+        });
+      }
+      if (!changed) break;
+    }
+
+    if (!Number.isFinite(dist[sink])) break;
+
+    let add = targetFlow - flow;
+    for (let node = sink; node !== source; node = prevNode[node]) {
+      const edge = graph[prevNode[node]][prevEdge[node]];
+      add = Math.min(add, edge.cap);
+    }
+
+    for (let node = sink; node !== source; node = prevNode[node]) {
+      const edge = graph[prevNode[node]][prevEdge[node]];
+      edge.cap -= add;
+      graph[node][edge.rev].cap += add;
+      cost += add * edge.cost;
+    }
+    flow += add;
+  }
+
+  return { flow, cost };
 }
 
 function seedMaleCoverage(members, assignments, assigned) {
@@ -667,19 +839,25 @@ function preferPriority(member, place) {
   return 3 - rank;
 }
 
-function renderAssignments(assignments, members, fixedWarnings = []) {
+function renderAssignments(assignments, members, fixedWarnings = [], solverInfo = {}) {
   const grid = $("#assignmentGrid");
   const unsubmittedCount = members.filter((member) => !member.submitted).length;
   const uncoveredMalePlaces = state.places.filter((place) => !assignments[place.id].some((member) => member.gender === "男"));
-  const avoidHits = membersAssigned(assignments).filter((member) => member.avoid.includes(member.assignedPlaceId));
+  const avoidHits = membersAssigned(assignments).filter(
+    (member) => !member.fixedAssignment && member.avoid.includes(member.assignedPlaceId),
+  );
   const fixedCount = membersAssigned(assignments).filter((member) => member.fixedAssignment).length;
 
   $("#simulationNotice").textContent = [
     `已先固定 ${fixedCount} 名队长。`,
+    "剩余人员先整体求解避开不想去地点的方案，再在不新增踩雷的前提下按想去顺序微调。",
     `已按 ${members.length} 人容量模拟。`,
     unsubmittedCount ? `${unsubmittedCount} 人未填写，已排在已填写人员后插空。` : "所有模拟人员均已填写。",
     uncoveredMalePlaces.length ? `${uncoveredMalePlaces.length} 个地点暂未满足男生覆盖。` : "每个地点均已有至少 1 名男生。",
-    avoidHits.length ? `${avoidHits.length} 人仍分到了不想去的地点。` : "没有人被分到已填写的不想去地点。",
+    avoidHits.length
+      ? `${avoidHits.length} 人仍分到了不想去的地点：${avoidHits.map((member) => member.name).join("、")}。`
+      : "没有非队长成员被分到已填写的不想去地点。",
+    solverInfo.relaxedCount ? `本次从低积分起放宽了 ${solverInfo.relaxedCount} 人的避让约束。` : "",
     fixedWarnings.length ? `固定分配提醒：${fixedWarnings.join("；")}。` : "",
   ].join(" ");
 

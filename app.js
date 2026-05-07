@@ -594,8 +594,19 @@ function seedMaleCoverage(members, assignments, assigned) {
     if (assignments[place.id].some((member) => member.gender === "男")) return;
     const candidate = maleMembers
       .filter((member) => !assigned.has(member.id))
-      .map((member) => ({ member, score: scorePlace(member, place, assignments, true) }))
-      .sort((a, b) => b.score - a.score || b.member.score - a.member.score)[0]?.member;
+      .map((member) => ({
+        member,
+        avoidPriority: avoidPriority(member, place),
+        preferPriority: preferPriority(member, place),
+        score: scorePlace(member, place, assignments, true),
+      }))
+      .sort(
+        (a, b) =>
+          b.avoidPriority - a.avoidPriority ||
+          b.member.score - a.member.score ||
+          b.preferPriority - a.preferPriority ||
+          b.score - a.score,
+      )[0]?.member;
 
     if (candidate && hasSpace(place, assignments)) {
       assignments[place.id].push(candidate);
@@ -616,8 +627,8 @@ function pickBestPlace(member, assignments) {
     .sort(
       (a, b) =>
         b.avoidPriority - a.avoidPriority ||
-        b.preferPriority - a.preferPriority ||
         b.score - a.score ||
+        b.preferPriority - a.preferPriority ||
         openSpace(b.place, assignments) - openSpace(a.place, assignments),
     )[0]?.place;
 }
@@ -636,7 +647,7 @@ function scorePlace(member, place, assignments, maleSeed) {
   const preferRank = member.prefer.indexOf(place.id);
 
   if (avoidRank >= 0) score -= 200 - avoidRank * 35;
-  if (preferRank >= 0) score += 34 - preferRank * 8;
+  if (preferRank >= 0) score += 14 - preferRank * 4;
   if (!member.submitted) score -= 18;
   if (maleSeed && member.gender === "男") score += 34;
   if (member.gender === "男" && !assignments[place.id].some((item) => item.gender === "男")) score += 18;

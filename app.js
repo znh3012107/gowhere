@@ -14,6 +14,18 @@ const defaultPlaces = [
   { id: "place-7", name: "地点七", capacity: 4 },
 ];
 
+const fixedAssignments = [
+  { name: "曾赫", placeKeywords: ["双柏"] },
+  { name: "夏彤菲", placeKeywords: ["妥甸"] },
+  { name: "朱曜炜", placeKeywords: ["平坝"] },
+  { name: "赵静", placeKeywords: ["平坝"] },
+  { name: "蔡煜", placeKeywords: ["红湖"] },
+  { name: "夏欣", placeKeywords: ["隆德"] },
+  { name: "戚茗秋", placeKeywords: ["隆德"] },
+  { name: "张婉茹", placeKeywords: ["泾源"] },
+  { name: "唐知圣", placeKeywords: ["巴东"] },
+];
+
 const state = loadState();
 let serverAvailable = false;
 let remoteProvider = "local";
@@ -206,6 +218,16 @@ function totalCapacity() {
 
 function uniqueValues(values) {
   return values.filter(Boolean).filter((value, index, all) => all.indexOf(value) === index);
+}
+
+function isFixedLeader(name) {
+  return fixedAssignments.some((assignment) => assignment.name === name);
+}
+
+function fixedPlaceForName(name) {
+  const assignment = fixedAssignments.find((item) => item.name === name);
+  if (!assignment) return null;
+  return state.places.find((place) => assignment.placeKeywords.some((keyword) => place.name.includes(keyword))) || null;
 }
 
 function createId() {
@@ -474,6 +496,19 @@ function buildMembersForSimulation() {
     members.push({ ...submission, submitted: true });
   });
 
+  fixedAssignments.forEach((assignment) => {
+    if (members.some((member) => member.name === assignment.name)) return;
+    members.push({
+      id: `fixed-${assignment.name}`,
+      name: assignment.name,
+      gender: "",
+      score: -1,
+      avoid: [],
+      prefer: [],
+      submitted: false,
+    });
+  });
+
   while (members.length < totalCapacity()) {
     members.push({
       id: `placeholder-${members.length + 1}`,
@@ -486,7 +521,9 @@ function buildMembersForSimulation() {
     });
   }
 
-  return members.slice(0, totalCapacity());
+  return members
+    .sort((a, b) => Number(isFixedLeader(b.name)) - Number(isFixedLeader(a.name)))
+    .slice(0, totalCapacity());
 }
 
 function runSimulation() {
@@ -494,6 +531,7 @@ function runSimulation() {
   const assignments = Object.fromEntries(state.places.map((place) => [place.id, []]));
   const assigned = new Set();
 
+  const fixedWarnings = seedFixedAssignments(members, assignments, assigned);
   const submittedMembers = members.filter((member) => member.submitted);
   const unsubmittedMembers = members.filter((member) => !member.submitted);
 
@@ -511,7 +549,34 @@ function runSimulation() {
     }
   });
 
-  renderAssignments(assignments, members);
+  renderAssignments(assignments, members, fixedWarnings);
+}
+
+function seedFixedAssignments(members, assignments, assigned) {
+  const warnings = [];
+
+  fixedAssignments.forEach((fixed) => {
+    const member = members.find((item) => item.name === fixed.name);
+    const place = fixedPlaceForName(fixed.name);
+
+    if (!member) {
+      warnings.push(`${fixed.name} 不在成员名单中`);
+      return;
+    }
+    if (!place) {
+      warnings.push(`${fixed.name} 的固定地点没有匹配到`);
+      return;
+    }
+    if (!hasSpace(place, assignments)) {
+      warnings.push(`${place.name} 容量已满，无法固定 ${fixed.name}`);
+      return;
+    }
+
+    assignments[place.id].push({ ...member, fixedAssignment: true });
+    assigned.add(member.id);
+  });
+
+  return warnings;
 }
 
 function seedMaleCoverage(members, assignments, assigned) {
@@ -568,17 +633,20 @@ function scorePlace(member, place, assignments, maleSeed) {
   return score;
 }
 
-function renderAssignments(assignments, members) {
+function renderAssignments(assignments, members, fixedWarnings = []) {
   const grid = $("#assignmentGrid");
   const unsubmittedCount = members.filter((member) => !member.submitted).length;
   const uncoveredMalePlaces = state.places.filter((place) => !assignments[place.id].some((member) => member.gender === "男"));
   const avoidHits = membersAssigned(assignments).filter((member) => member.avoid.includes(member.assignedPlaceId));
+  const fixedCount = membersAssigned(assignments).filter((member) => member.fixedAssignment).length;
 
   $("#simulationNotice").textContent = [
+    `已先固定 ${fixedCount} 名队长。`,
     `已按 ${members.length} 人容量模拟。`,
     unsubmittedCount ? `${unsubmittedCount} 人未填写，已排在已填写人员后插空。` : "所有模拟人员均已填写。",
     uncoveredMalePlaces.length ? `${uncoveredMalePlaces.length} 个地点暂未满足男生覆盖。` : "每个地点均已有至少 1 名男生。",
     avoidHits.length ? `${avoidHits.length} 人仍分到了不想去的地点。` : "没有人被分到已填写的不想去地点。",
+    fixedWarnings.length ? `固定分配提醒：${fixedWarnings.join("；")}。` : "",
   ].join(" ");
 
   grid.innerHTML = state.places
@@ -616,9 +684,11 @@ function membersAssigned(assignments) {
 function assignmentItem(member, placeId) {
   const avoidRank = member.avoid.indexOf(placeId);
   const preferRank = member.prefer.indexOf(placeId);
-  const className = avoidRank >= 0 ? "avoid" : preferRank >= 0 ? "prefer" : "";
+  const className = member.fixedAssignment ? "fixed" : avoidRank >= 0 ? "avoid" : preferRank >= 0 ? "prefer" : "";
   const status =
-    avoidRank >= 0
+    member.fixedAssignment
+      ? "队长固定分配"
+      : avoidRank >= 0
       ? `不想去第 ${avoidRank + 1} 位`
       : preferRank >= 0
         ? `想去第 ${preferRank + 1} 位`
